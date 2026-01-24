@@ -195,155 +195,109 @@ To implement the actual RAG logic, you will need to:
 
 ## 6. Building the RAG Pipeline (Student Implementation)
 
-This section describes what you need to implement to make the RAG application work properly. The `api_server.py` is already complete and handles all API routing and SSE streaming. **Your focus is on building the RAG logic.**
-
-### Required Files
-
-You need to create two main files in the `backend/` directory:
-
-1.  **`rag_generate.py`** - Main RAG orchestration and answer generation
-2.  **`retrieval_pipeline.py`** - Document retrieval and ranking
-
-### File 1: `retrieval_pipeline.py`
-
-This file handles retrieving relevant document chunks from your knowledge base.
-
-**Required Classes and Methods:**
-
-```python
-class RetrievalPipeline:
-    """
-    Handles hybrid retrieval: semantic search (via OpenRouter + Qdrant Cloud) + keyword search (BM25).
-    """
-    
-    def __init__(self, config: Optional[RetrievalPipelineConfig] = None):
-        """
-        Initialize the retrieval pipeline.
-        
-        Args:
-            config: Optional configuration object. If None, loads from environment variables.
-        
-        Environment variables required (if config is None):
-            - OPENROUTER_API_KEY: OpenRouter API key for embeddings
-            - QDRANT_URL: Qdrant Cloud URL
-            - QDRANT_API_KEY: Qdrant Cloud API key
-            - CHUNKS_PATH: Path to chunks.json
-            - RERANKER_TYPE: "cross-encoder", "cohere", or "none"
-            - CROSS_ENCODER_MODEL: Model name for local reranking (if using cross-encoder)
-            - COHERE_API_KEY: Cohere API key (if using cohere reranker)
-        """
-        pass
-    
-    def retrieve(self, query: str, top_k: int = 8) -> List[SearchResult]:
-        """
-        Retrieve the most relevant document chunks for a query.
-        
-        Args:
-            query: User's search query
-            top_k: Number of results to return
-            
-        Returns:
-            List of SearchResult objects with paper_id, chunk_text, score, and metadata
-        """
-        pass
-
-class SearchResult:
-    """
-    Represents a single search result.
-    """
-    paper_id: str          # Unique paper identifier
-    chunk_text: str        # The actual text content
-    score: float           # Relevance score
-    metadata: dict         # Paper metadata (title, authors, pdf_url, etc.)
-```
-
-**What You Need to Implement:**
-
--   **Semantic Search**: Use OpenRouter API for embeddings + Qdrant Cloud for vector search
--   **Keyword Search**: Implement BM25 for exact keyword matching (runs locally)
--   **Hybrid Fusion**: Combine semantic and keyword results using weighted scoring
--   **Reranking**: Use local cross-encoder model (default) or Cohere API (optional)
-
-
-**Architecture:**
-- **Embeddings**: OpenRouter API -> bge-large-en-v1.5
-- **Vector DB**: Qdrant Cloud (no local storage needed)
-- **BM25**: Local in-memory index
-- **Reranking**: Cohere API
+The `api_server.py` is already complete. **Your job is to implement the RAG logic in 3 files.**
 
 ---
 
-### File 2: `rag_generate.py`
+### 📁 Understanding `chunks.json`
 
-This file orchestrates the RAG pipeline and generates answers using an LLM.
+Download `chunks.json` from the Google Drive link. Each chunk contains:
+- `chunk_id` - Unique ID (use as vector ID in Qdrant)
+- `text` - Content to embed and search
+- `title`, `authors`, `pdf_url`, `github_link`, `video_link` - Metadata for citations
 
-**What You Need to Implement:**
+---
 
-1.  **LLM Integration**: Connect to OpenAI or Anthropic API
-2.  **Query Refinement** (Optional): Use LLM to improve search queries
-3.  **Context Formatting**: Format retrieved chunks into a prompt
-4.  **Answer Generation**: Call LLM with context and query
-5.  **Source Extraction**: Build metadata for citations
-6.  **Streaming Support**: The `api_server.py` handles streaming by calling your methods
+### 🔧 Files to Implement
 
-**Key Dependencies:**
+Starter files are already created in `backend/` with TODO comments. Open each file and implement the functions:
 
-```python
-# All models accessed via OpenRouter API
-import requests  # For OpenRouter API calls
-from retrieval_pipeline import RetrievalPipeline, SearchResult
+| File | Purpose |
+|------|---------|
+| `upload_to_qdrant.py` | One-time script to embed chunks and upload to Qdrant Cloud |
+| `retrieval_pipeline.py` | Hybrid search (semantic + BM25 + reranking) |
+| `rag_generate.py` | Generate answers using LLM |
+
+---
+
+## STEP 1: Upload Embeddings to Qdrant Cloud
+
+**File: `backend/upload_to_qdrant.py`**
+
+Implement these functions (see TODO comments in file):
+
+| Function | What it does |
+|----------|--------------|
+| `load_chunks()` | Load and parse `chunks.json` |
+| `get_embeddings_batch()` | Call OpenRouter API to get embeddings for multiple texts |
+| `create_qdrant_collection()` | Create a Qdrant collection with cosine distance |
+| `upload_chunks_to_qdrant()` | Loop through chunks, embed them, upload to Qdrant |
+| `main()` | Orchestrate the upload process |
+
+**After implementing, run once:**
+```bash
+cd backend
+python upload_to_qdrant.py
 ```
 
-**OpenRouter Integration:**
+This takes ~10-30 minutes. Cost: ~$0.50-1.00 for embeddings.
 
-The RAG pipeline uses OpenRouter API for both embeddings and LLM generation. 
+---
 
-Example LLM call via OpenRouter:
-```python
-import requests
+## STEP 2: Implement Retrieval Pipeline
 
-headers = {
-    "Authorization": f"Bearer {openrouter_api_key}",
-    "Content-Type": "application/json"
-}
+**File: `backend/retrieval_pipeline.py`**
 
-payload = {
-    "model": "openai/gpt-4-turbo-preview",  # or "anthropic/claude-3-opus"
-    "messages": [
-        {"role": "system", "content": "You are a helpful assistant."},
-        {"role": "user", "content": "Your question here"}
-    ],
-    "stream": True  # For streaming responses
-}
+Implement these classes/functions:
 
-response = requests.post(
-    "https://openrouter.ai/api/v1/chat/completions",
-    headers=headers,
-    json=payload,
-    stream=True
-)
+| Class/Function | What it does |
+|----------------|--------------|
+| `OpenRouterEmbedder.__init__()` | Store API key, model, base URL |
+| `OpenRouterEmbedder.embed_query()` | Get embedding for a query via OpenRouter API |
+| `BM25Index.__init__()` | Tokenize chunks and build BM25 index |
+| `BM25Index._tokenize()` | Convert text to lowercase word tokens |
+| `BM25Index.search()` | Return top-k BM25 matches |
+| `RetrievalPipeline.__init__()` | Initialize Qdrant client, embedder, BM25 index |
+| `RetrievalPipeline.semantic_search()` | Query Qdrant with embedded query |
+| `RetrievalPipeline.bm25_search()` | Run BM25 keyword search |
+| `RetrievalPipeline.hybrid_search()` | Combine semantic + BM25 with weighted scores |
+| `RetrievalPipeline.rerank()` | (Optional) Rerank using Cohere API |
+| `RetrievalPipeline.retrieve()` | Full pipeline → returns `RetrievalResult` list |
+
+**Test:**
+```bash
+python retrieval_pipeline.py "3D Gaussian Splatting"
 ```
 
 ---
 
-### Data Files You'll Need
+## STEP 3: Implement RAG Generator
 
-Your RAG pipeline will need access to:
+**File: `backend/rag_generate.py`**
 
-1.  **`chunks.json`**: Contains paper metadata and text chunks
-    -   Format: List of objects with `paper_id`, `chunk_text`, `metadata` (title, authors, urls)
-    
-2.  **Vector Database**: Pre-computed embeddings (e.g., Qdrant, FAISS)
-    -   Should contain embeddings for all chunks in `chunks.json`
-    -   Indexed by `paper_id` or chunk ID
+Implement these methods:
+
+| Method | What it does |
+|--------|--------------|
+| `RAGGenerator.__init__()` | Initialize config, retrieval pipeline, API key |
+| `RAGGenerator.refine_query()` | (Optional) Use LLM to improve search query |
+| `RAGGenerator._format_context()` | Format retrieved chunks into context string |
+| `RAGGenerator._build_sources_metadata()` | Build unique sources list for citations |
+| `RAGGenerator._call_llm()` | Call OpenRouter chat API to generate answer |
+| `RAGGenerator.generate()` | Full RAG pipeline → returns answer + sources |
+
+**Test:**
+```bash
+python rag_generate.py "What is 3D Gaussian Splatting?"
+```
 
 ---
 
-### Integration with `api_server.py`
+## STEP 4: Connect to api_server.py
 
-Once you've implemented `rag_generate.py` and `retrieval_pipeline.py`, update the import in `api_server.py`:
+Once everything works, update `api_server.py` to use your implementation:
 
-**Change line 36 from:**
+**Change this line (around line 36):**
 ```python
 from test_backend_integration import RAGGenerator, GenerationConfig, SYSTEM_PROMPT
 ```
@@ -353,75 +307,75 @@ from test_backend_integration import RAGGenerator, GenerationConfig, SYSTEM_PROM
 from rag_generate import RAGGenerator, GenerationConfig, SYSTEM_PROMPT
 ```
 
-The `api_server.py` will automatically:
--   Initialize your `RAGGenerator` on startup
--   Call `refine_query()` for query refinement
--   Call `retrieval.retrieve()` for document search
--   Stream LLM responses via `llm_client.chat.completions.create(stream=True)`
--   Format SSE events for the frontend
+Then run:
+```bash
+python api_server.py
+```
+
+Test with curl:
+```bash
+curl -N "http://localhost:8082/api/stream?query=3D%20Gaussian%20Splatting&top_k=5"
+```
 
 ---
 
-### Testing Your Implementation
+### 📋 Implementation Checklist
 
-1.  **Test Retrieval First**:
-    ```python
-    from retrieval_pipeline import RetrievalPipeline
-    
-    # Loads configuration from environment variables (.env file)
-    pipeline = RetrievalPipeline()
-    results = pipeline.retrieve("What is 3D Gaussian Splatting?", top_k=5)
-    print(results)
-    ```
+**Setup (do once):**
+- [ ] Download `chunks.json` from Google Drive
+- [ ] Get OpenRouter API key: https://openrouter.ai/keys
+- [ ] Create Qdrant Cloud account: https://cloud.qdrant.io
+- [ ] Create a Qdrant cluster (free tier is fine)
+- [ ] Get Qdrant URL and API key from dashboard
+- [ ] (Optional) Get Cohere API key for reranking: https://dashboard.cohere.com
 
-2.  **Test RAG Generation**:
-    ```python
-    from rag_generate import RAGGenerator, GenerationConfig
-    
-    config = GenerationConfig()
-    rag = RAGGenerator(config)
-    response = rag.generate("What is 3D Gaussian Splatting?")
-    print(response)
-    ```
+**Step 1 - Upload to Qdrant:**
+- [ ] Create `upload_to_qdrant.py`
+- [ ] Implement `load_chunks()`
+- [ ] Implement `get_embeddings_batch()`
+- [ ] Implement `create_qdrant_collection()`
+- [ ] Implement `upload_chunks_to_qdrant()`
+- [ ] Run the script: `python upload_to_qdrant.py`
+- [ ] Verify in Qdrant dashboard that vectors are uploaded
 
-3.  **Test Full API**:
-    ```bash
-    python api_server.py
-    curl -N "http://localhost:8082/api/stream?query=test&top_k=5"
-    ```
+**Step 2 - Retrieval Pipeline:**
+- [ ] Create `retrieval_pipeline.py`
+- [ ] Implement `OpenRouterEmbedder` class
+- [ ] Implement `BM25Index` class
+- [ ] Implement `RetrievalPipeline.__init__()`
+- [ ] Implement `semantic_search()`
+- [ ] Implement `bm25_search()`
+- [ ] Implement `hybrid_search()`
+- [ ] Implement `rerank()` (optional)
+- [ ] Implement `retrieve()`
+- [ ] Test: retrieval returns results
 
----
+**Step 3 - RAG Generator:**
+- [ ] Create `rag_generate.py`
+- [ ] Implement `RAGGenerator.__init__()`
+- [ ] Implement `refine_query()` (optional)
+- [ ] Implement `_format_context()`
+- [ ] Implement `_build_sources_metadata()`
+- [ ] Implement `_call_llm()`
+- [ ] Implement `generate()`
+- [ ] Test: `python rag_generate.py "test query"`
 
-### Implementation Checklist
-
-- [ ] Set up environment variables in `.env` file
-- [ ] Get OpenRouter API key for embeddings and LLM
-- [ ] Set up Qdrant Cloud cluster and get credentials
-- [ ] Create `retrieval_pipeline.py` with `RetrievalPipeline` class
-- [ ] Implement OpenRouter API integration for embeddings
-- [ ] Implement Qdrant Cloud connection for vector search
-- [ ] Implement keyword search (BM25) - runs locally
-- [ ] Implement hybrid result fusion and ranking
-- [ ] Set up reranker (cross-encoder local or Cohere API)
-- [ ] Create `rag_generate.py` with `RAGGenerator` class
-- [ ] Integrate OpenRouter API for LLM generation
-- [ ] Implement context formatting
-- [ ] Implement streaming answer generation
-- [ ] Extract and format source metadata
-- [ ] Update `api_server.py` import statement
-- [ ] Test with `curl` commands
+**Step 4 - Integration:**
+- [ ] Update import in `api_server.py`
+- [ ] Run `python api_server.py`
+- [ ] Test with curl
 - [ ] Test with frontend UI
 
 ---
 
-### Tips for Success
+### 💡 Tips for Success
 
--   **Start Simple**: Get basic retrieval working first, then add reranking
--   **Test Incrementally**: Test each component independently before integration
--   **Use Mock Data**: Create a small test dataset to iterate quickly
--   **Check API Contract**: Ensure your return formats match what `api_server.py` expects
--   **Monitor Costs**: LLM API calls cost money - use smaller models for testing
--   **Handle Errors**: Add try-except blocks and meaningful error messages
+1. **Start with Step 1** - You can't do retrieval without vectors in Qdrant
+2. **Test each function individually** before moving on
+3. **Use print statements** to debug API responses
+4. **Check API costs** - OpenRouter shows usage at https://openrouter.ai/activity
+5. **Use cheaper models for testing** (`gpt-3.5-turbo` instead of `gpt-4`)
+6. **Read error messages carefully** - they usually tell you what's wrong
 
 ---
 
