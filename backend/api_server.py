@@ -33,7 +33,8 @@ try:
 except ImportError:
     pass
 
-from test_backend_integration import RAGGenerator, GenerationConfig, SYSTEM_PROMPT
+from rag_generate import RAGGenerator, GenerationConfig, SYSTEM_PROMPT
+from retrieval_pipeline import RetrievalPipeline, RetrievalPipelineConfig
 
 
 # Global instances
@@ -54,13 +55,29 @@ async def lifespan(app: FastAPI):
     print("="*60)
     
     config = GenerationConfig(
-        llm_provider="openai",
         retrieval_top_k=8,
-        refine_query=True,
-        use_reranker=True
+        refine_query=True
     )
     
-    rag_generator = RAGGenerator(config)
+    # Create retrieval pipeline config separately
+    chunks_path = str(BASE_DIR / "chunks.json")
+    print(f"Looking for chunks.json at: {chunks_path}")
+    
+    retrieval_config = RetrievalPipelineConfig(
+        qdrant_url=os.getenv("QDRANT_URL", ""),
+        qdrant_api_key=os.getenv("QDRANT_API_KEY", ""),
+        openrouter_api_key=os.getenv("OPENROUTER_API_KEY", ""),
+        cohere_api_key=os.getenv("COHERE_API_KEY"),
+        chunks_path=chunks_path,
+    )
+    
+    print(f"Retrieval config chunks_path: {retrieval_config.chunks_path}")
+    
+    # Create retrieval pipeline first
+    retrieval_pipeline = RetrievalPipeline(retrieval_config)
+    
+    # Then create RAG generator with the retrieval pipeline
+    rag_generator = RAGGenerator(config, retrieval_pipeline)
     print("\n✅ RAG pipeline ready!")
     print("="*60 + "\n")
     
@@ -142,7 +159,7 @@ async def query_endpoint(request: QueryRequest):
     try:
         # Run in thread pool to avoid blocking
         loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(
+        result = await loop.run_in_executor(
             None,
             lambda: rag_generator.generate(
                 request.query,
@@ -151,13 +168,16 @@ async def query_endpoint(request: QueryRequest):
             )
         )
         
+        answer = result["answer"]
+        sources_metadata = result["sources"]
+        
         processing_time = time.time() - start_time
         
         return QueryResponse(
-            query=response["query"],
-            refined_query=response.get("refined_query"),
-            answer=response["answer"],
-            sources=response.get("sources", []),
+            query=request.query,
+            refined_query=result.get("refined_query"),
+            answer=answer,
+            sources=sources_metadata,
             processing_time=processing_time
         )
     
@@ -241,7 +261,7 @@ IMPORTANT: You have been provided with {len(results)} paper excerpts. Make sure 
 2. Use inline citations [Paper Title] for all claims
 3. For "which paper" or "what papers" questions, list ALL relevant papers
 4. Do NOT include a References section - only use inline citations"""
-
+        
         # Stream from OpenRouter
         import requests
         
@@ -251,7 +271,7 @@ IMPORTANT: You have been provided with {len(results)} paper excerpts. Make sure 
         }
         
         payload = {
-            "model": f"openai/{rag_generator.config.llm_model}",
+            "model": rag_generator.config.llm_model,  # Fixed: removed "openai/" prefix
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_message}
@@ -267,6 +287,10 @@ IMPORTANT: You have been provided with {len(results)} paper excerpts. Make sure 
             json=payload,
             stream=True
         )
+        
+        if response.status_code != 200:
+            yield emit("error", {"message": f"LLM API error: {response.status_code} - {response.text}"})
+            return
         
         answer_chunks = []
         for line in response.iter_lines():
@@ -289,9 +313,10 @@ IMPORTANT: You have been provided with {len(results)} paper excerpts. Make sure 
         
         # Stage 4: Complete
         processing_time = time.time() - start_time
+        
         yield emit("complete", {
             "answer": answer,
-            "sources": list(sources_metadata.values()),
+            "sources": sources_metadata,
             "refined_query": refined if refined != query else None,
             "processing_time": processing_time
         })
@@ -489,7 +514,7 @@ IMPORTANT: You have been provided with {len(results)} paper excerpts. Make sure 
         await websocket.send_json({
             "type": "complete",
             "answer": answer,
-            "sources": list(sources_metadata.values()),
+            "sources": sources_metadata,
             "refined_query": refined if refined != query else None,
             "processing_time": processing_time
         })
